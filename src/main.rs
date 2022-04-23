@@ -32,14 +32,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-
     use crate::BreedResponse;
     use crate::TheCatApi;
 
-    struct TheCatApiClientMock {}
-    impl TheCatApi for TheCatApiClientMock {
-        fn search_breeds(&self, _query: &str) -> Result<BreedResponse, Box<dyn std::error::Error>> {
-            let data = r#"
+    #[test]
+    fn search_breeds() {
+        struct TheCatApiClientMock {}
+        impl TheCatApi for TheCatApiClientMock {
+            fn search_breeds(
+                &self,
+                _query: &str,
+            ) -> Result<BreedResponse, Box<dyn std::error::Error>> {
+                let data = r#"
             [
               {
                 "weight": {
@@ -86,19 +90,40 @@ mod tests {
             ]
         "#;
 
-            let resp: BreedResponse = serde_json::from_str(data)?;
+                let resp: BreedResponse = serde_json::from_str(data)?;
 
-            Ok(resp)
+                Ok(resp)
+            }
         }
-    }
 
-    #[test]
-    fn search_breeds() {
         let client = TheCatApiClientMock {};
         let resp = client
             .search_breeds("does not matter what i put")
             .expect("search_breeds failed");
         assert_eq!(resp[0].id, "sibe");
         assert_eq!(resp[0].name, "Siberian");
+    }
+
+    #[test]
+    fn search_breeds_decode_error() {
+        struct TheCatApiClientMock {}
+        impl TheCatApi for TheCatApiClientMock {
+            fn search_breeds(
+                &self,
+                _query: &str,
+            ) -> Result<BreedResponse, Box<dyn std::error::Error>> {
+                let data = "nope";
+
+                let resp: BreedResponse = serde_json::from_str(data)?;
+
+                Ok(resp)
+            }
+        }
+
+        let client = TheCatApiClientMock {};
+        let err = client
+            .search_breeds("does not matter what i put")
+            .unwrap_err();
+        assert_eq!(err.to_string(), "expected ident at line 2 column 18");
     }
 }
