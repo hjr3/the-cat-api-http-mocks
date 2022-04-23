@@ -22,10 +22,24 @@ impl TheCatApi for TheCatApiClient {
     }
 }
 
-struct TheCatApiClientMock {}
-impl TheCatApi for TheCatApiClientMock {
-    fn search_breeds(&self, _query: &str) -> Result<BreedResponse, Box<dyn std::error::Error>> {
-        let data = r#"
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = TheCatApiClient {};
+    let resp = client.search_breeds("sib")?;
+    println!("{:#?}", resp);
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::BreedResponse;
+    use crate::TheCatApi;
+
+    struct TheCatApiClientMock {}
+    impl TheCatApi for TheCatApiClientMock {
+        fn search_breeds(&self, _query: &str) -> Result<BreedResponse, Box<dyn std::error::Error>> {
+            let data = r#"
             [
               {
                 "weight": {
@@ -72,19 +86,19 @@ impl TheCatApi for TheCatApiClientMock {
             ]
         "#;
 
-        let resp: BreedResponse = serde_json::from_str(data)?;
+            let resp: BreedResponse = serde_json::from_str(data)?;
 
-        Ok(resp)
+            Ok(resp)
+        }
     }
-}
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = TheCatApiClient {};
-    let resp = client.search_breeds("sib")?;
-    println!("{:#?}", resp);
-
-    let client = TheCatApiClientMock {};
-    let resp = client.search_breeds("does not matter what i put")?;
-    println!("{:#?}", resp);
-    Ok(())
+    #[test]
+    fn search_breeds() {
+        let client = TheCatApiClientMock {};
+        let resp = client
+            .search_breeds("does not matter what i put")
+            .expect("search_breeds failed");
+        assert_eq!(resp[0].id, "sibe");
+        assert_eq!(resp[0].name, "Siberian");
+    }
 }
