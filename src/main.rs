@@ -1,62 +1,95 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+use std::sync::Arc;
 
-#[macro_use]
-extern crate rocket;
-use rocket::http::RawStr;
-use rocket::request::State;
-use rocket::Rocket;
+use axum::{
+    extract::{Extension, Query},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
+use axum_macros::debug_handler;
+use serde::Deserialize;
+use serde_json::json;
 
 mod the_cat_api;
 
-use the_cat_api::TheCatApi;
-use the_cat_api::TheCatApiClient;
+use the_cat_api::{BreedResponse, TheCatApi, TheCatApiClient};
 
-#[get("/")]
-fn index() -> &'static str {
-    "Hello, world!"
+struct Context {
+    the_cat_api: Box<dyn TheCatApi>,
 }
 
-#[get("/breed?<search>")]
-fn get_breed(
-    client: State<Box<dyn TheCatApi>>,
-    search: &RawStr,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let resp = client.inner().search_breeds(search)?;
+#[tokio::main]
+async fn main() {
+    let the_cat_api = Box::new(TheCatApiClient {});
+    let app = app(the_cat_api);
 
-    Ok(resp[0].name.clone())
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 
-fn setup(the_cat_api: Box<dyn TheCatApi>) -> Rocket {
-    rocket::ignite()
-        .manage(the_cat_api)
-        .mount("/", routes![index, get_breed])
+fn app(the_cat_api: Box<dyn TheCatApi>) -> Router {
+    let context = Context { the_cat_api };
+
+    Router::new()
+        .route("/breeds", get(get_breed))
+        .layer(Extension(Arc::new(context)))
 }
 
-fn main() {
-    let the_cat_api_client = Box::new(TheCatApiClient {});
+#[derive(Deserialize)]
+struct GetBreedParams {
+    search: String,
+}
 
-    let rocket = setup(the_cat_api_client);
-    rocket.launch();
+#[debug_handler]
+async fn get_breed(
+    Query(params): Query<GetBreedParams>,
+    Extension(context): Extension<Arc<Context>>,
+) -> Result<Json<BreedResponse>, AppError> {
+    match context.the_cat_api.search_breeds(&params.search).await {
+        Ok(resp) => Ok(resp.into()),
+        Err(_) => Err(AppError::InternalError),
+    }
+}
+
+enum AppError {
+    InternalError,
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            AppError::InternalError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"),
+        };
+
+        let body = Json(json!({
+            "error": error_message,
+        }));
+
+        (status, body).into_response()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rocket::http::RawStr;
-    use rocket::request::State;
+
+    use async_trait::async_trait;
+    use axum::{body::Body, http::Request};
+    use serde_json::{json, Value};
+    use tower::ServiceExt; // for `app.oneshot()`
 
     use the_cat_api::BreedResponse;
 
-    #[test]
-    fn index_succeeds() {
-        assert_eq!(index(), "Hello, world!");
-    }
-
-    #[test]
-    fn breed_succeeds() {
+    #[tokio::test]
+    async fn breed_succeeds() {
         struct TheCatApiClientMock {}
+
+        #[async_trait]
         impl TheCatApi for TheCatApiClientMock {
-            fn search_breeds(
+            async fn search_breeds(
                 &self,
                 query: &str,
             ) -> Result<BreedResponse, Box<dyn std::error::Error>> {
@@ -115,18 +148,27 @@ mod tests {
         }
 
         let mock_client = Box::new(TheCatApiClientMock {});
-        let rocket = setup(mock_client);
-        let state: State<Box<dyn TheCatApi>> =
-            State::from(&rocket).expect("managing `TheCatApiClientMock`");
-        let resp = get_breed(state, RawStr::from_str("sib")).expect("get_breed failed");
-        assert_eq!(resp, "Siberian");
+        let app = app(mock_client);
+
+        let req = Request::builder()
+            .uri("/breeds?search=sib")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(body, json!([{ "id": "sibe", "name": "Siberian"}]));
     }
 
-    #[test]
-    fn breed_decode_error() {
+    #[tokio::test]
+    async fn breed_decode_error() {
         struct TheCatApiClientMock {}
+
+        #[async_trait]
         impl TheCatApi for TheCatApiClientMock {
-            fn search_breeds(
+            async fn search_breeds(
                 &self,
                 _query: &str,
             ) -> Result<BreedResponse, Box<dyn std::error::Error>> {
@@ -139,10 +181,17 @@ mod tests {
         }
 
         let mock_client = Box::new(TheCatApiClientMock {});
-        let rocket = setup(mock_client);
-        let state: State<Box<dyn TheCatApi>> =
-            State::from(&rocket).expect("managing `TheCatApiClientMock`");
-        let err = get_breed(state, RawStr::from_str("sib")).unwrap_err();
-        assert_eq!(err.to_string(), "expected ident at line 1 column 2");
+        let app = app(mock_client);
+
+        let req = Request::builder()
+            .uri("/breeds?search=sib")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(body, json!({ "error": "Internal Server Error" }));
     }
 }
