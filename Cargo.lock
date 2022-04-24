@@ -1001,16 +1001,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-mocks"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "rocket",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "ryu"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1179,6 +1169,16 @@ dependencies = [
  "redox_syscall",
  "remove_dir_all",
  "winapi",
+]
+
+[[package]]
+name = "the-cat-api-http-mocks"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "rocket",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
