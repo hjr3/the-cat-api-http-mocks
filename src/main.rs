@@ -76,6 +76,8 @@ impl IntoResponse for AppError {
 mod tests {
     use super::*;
 
+    use std::net::{SocketAddr, TcpListener};
+
     use async_trait::async_trait;
     use axum::{body::Body, http::Request};
     use serde_json::{json, Value};
@@ -193,5 +195,33 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(body, json!({ "error": "Internal Server Error" }));
+    }
+
+    #[tokio::test]
+    async fn get_breeds_real() {
+        let listener = TcpListener::bind("0.0.0.0:0".parse::<SocketAddr>().unwrap()).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let mock_client = Box::new(TheCatApiClient {});
+        let app = app(mock_client);
+
+        tokio::spawn(async move {
+            axum::Server::from_tcp(listener)
+                .unwrap()
+                .serve(app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        let client = hyper::Client::new();
+        let req = Request::builder()
+            .uri(format!("http://{}/breeds?search=sib", addr))
+            .body(Body::empty())
+            .unwrap();
+        let resp = client.request(req).await.unwrap();
+
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body, json!([{ "id": "sibe", "name": "Siberian"}]));
     }
 }
